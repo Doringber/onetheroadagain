@@ -61,6 +61,13 @@ class RoutePlan:
 
 
 @dataclass
+class MultiModalPlan:
+    """Result of comparing multiple modes side-by-side."""
+    plans: dict[TransportMode, list[Route]]
+    trace: FetchTrace
+
+
+@dataclass
 class DisruptionSnapshot:
     events: list[DisruptionEvent]
     trace: FetchTrace
@@ -172,19 +179,68 @@ class Aggregator:
         destination: Place,
         departure_time: datetime | None = None,
     ) -> RoutePlan:
-        """Run the routing provider under the bounded runner. Provider
+        """Driving-mode plan. Identical to plan_in_mode(DRIVING) but
+        kept as a named method for backwards compatibility with
+        morning_briefing v1."""
+        return await self.plan_in_mode(origin, destination, TransportMode.DRIVING, departure_time)
+
+    async def plan_in_mode(
+        self,
+        origin: Place,
+        destination: Place,
+        mode: TransportMode,
+        departure_time: datetime | None = None,
+    ) -> RoutePlan:
+        """Run the routing provider in any supported mode. Provider
         errors (missing API key, HTTP failure) surface as
-        `trace.failures[...]` rather than exceptions, so the caller can
-        keep going with whatever else succeeded."""
+        `trace.failures[...]` rather than exceptions."""
 
         async def _call() -> list[Route]:
             async with self._routing_provider() as src:
-                return await src.plan(origin, destination, TransportMode.DRIVING, departure_time)
+                return await src.plan(origin, destination, mode, departure_time)
 
-        results = await self._runner.run({"google_routes": _call})
+        task_name = f"google_routes:{mode.value}"
+        results = await self._runner.run({task_name: _call})
         trace = _trace_from(results)
         routes = next(iter(successes(results).values()), []) or []
         return RoutePlan(routes=routes, trace=trace)
+
+    async def compare_modes(
+        self,
+        origin: Place,
+        destination: Place,
+        modes: tuple[TransportMode, ...] = (TransportMode.DRIVING, TransportMode.TRANSIT),
+        departure_time: datetime | None = None,
+    ) -> "MultiModalPlan":
+        """Plan each requested mode in parallel and return them side-by-side.
+
+        Same TaskRunner that powers disruption fan-out — modes run truly
+        concurrently, so total wall time is max(per-mode latency) rather
+        than the sum. A failure in one mode (e.g. transit unavailable)
+        does not block the other from returning.
+        """
+        from typing import Awaitable
+
+        def _factory(m: TransportMode):
+            async def _call() -> list[Route]:
+                async with self._routing_provider() as src:
+                    return await src.plan(origin, destination, m, departure_time)
+            return _call
+
+        tasks: dict[str, Callable[[], Awaitable[list[Route]]]] = {
+            f"google_routes:{m.value}": _factory(m) for m in modes
+        }
+        results = await self._runner.run(tasks)
+        trace = _trace_from(results)
+        plans_by_mode: dict[TransportMode, list[Route]] = {}
+        for m in modes:
+            key = f"google_routes:{m.value}"
+            r = results.get(key)
+            if r and r.ok and r.value:
+                plans_by_mode[m] = r.value
+            else:
+                plans_by_mode[m] = []
+        return MultiModalPlan(plans=plans_by_mode, trace=trace)
 
     # --- disruptions ---------------------------------------------------
 

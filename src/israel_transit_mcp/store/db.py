@@ -34,13 +34,14 @@ CREATE TABLE IF NOT EXISTS saved_routes (
 CREATE TABLE IF NOT EXISTS eta_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     saved_route_id INTEGER NOT NULL REFERENCES saved_routes(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL DEFAULT 'driving',
     observed_at TEXT NOT NULL,
     eta_s INTEGER NOT NULL,
     weekday INTEGER NOT NULL,
     hour INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_eta_route_bucket
-    ON eta_observations (saved_route_id, weekday, hour);
+    ON eta_observations (saved_route_id, mode, weekday, hour);
 
 CREATE TABLE IF NOT EXISTS user_prefs (
     key TEXT PRIMARY KEY,
@@ -122,16 +123,17 @@ class Store:
 
     # --- eta observations ----------------------------------------------
 
-    def record_eta(self, obs: ETAObservation) -> None:
+    def record_eta(self, obs: ETAObservation, mode: str = "driving") -> None:
         with self.tx() as c:
             c.execute(
                 """
                 INSERT INTO eta_observations
-                    (saved_route_id, observed_at, eta_s, weekday, hour)
-                VALUES (?, ?, ?, ?, ?)
+                    (saved_route_id, mode, observed_at, eta_s, weekday, hour)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     obs.saved_route_id,
+                    mode,
                     obs.observed_at.isoformat(),
                     obs.eta_s,
                     obs.weekday,
@@ -140,17 +142,21 @@ class Store:
             )
 
     def bucket_observations(
-        self, saved_route_id: int, weekday: int, hour: int
+        self,
+        saved_route_id: int,
+        weekday: int,
+        hour: int,
+        mode: str = "driving",
     ) -> list[int]:
-        """Return raw eta_s samples for a (route, weekday, hour) bucket."""
+        """Return raw eta_s samples for a (route, mode, weekday, hour) bucket."""
         cur = self._conn.execute(
             """
             SELECT eta_s FROM eta_observations
-            WHERE saved_route_id = ? AND weekday = ? AND hour = ?
+            WHERE saved_route_id = ? AND mode = ? AND weekday = ? AND hour = ?
             ORDER BY observed_at DESC
             LIMIT 200
             """,
-            (saved_route_id, weekday, hour),
+            (saved_route_id, mode, weekday, hour),
         )
         return [int(r[0]) for r in cur.fetchall()]
 

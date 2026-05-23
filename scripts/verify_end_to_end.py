@@ -61,10 +61,16 @@ from israel_transit_mcp.models import (
 
 @dataclass
 class FakeRouting:
-    """Returns whatever Route list the test sets up — no HTTP."""
-    routes: list[Route]
+    """Returns whatever Route list the test sets up — no HTTP.
+
+    Pre-multi-modal callers pass `routes` and we return it for any mode.
+    Multi-modal callers pass `routes_by_mode` and we return mode-specific
+    canned data. The two forms are kept for backwards-compat with the
+    earlier scenarios."""
+    routes: list[Route] | None = None
+    routes_by_mode: dict[TransportMode, list[Route]] | None = None
     name: str = "fake_routing"
-    supports_modes: tuple = (TransportMode.DRIVING,)
+    supports_modes: tuple = (TransportMode.DRIVING, TransportMode.TRANSIT)
 
     async def plan(
         self,
@@ -73,7 +79,9 @@ class FakeRouting:
         mode: TransportMode,
         departure_time: datetime | None = None,
     ) -> list[Route]:
-        return list(self.routes)
+        if self.routes_by_mode is not None:
+            return list(self.routes_by_mode.get(mode, []))
+        return list(self.routes or [])
 
 
 @dataclass
@@ -438,6 +446,166 @@ async def run_scenarios() -> int:
         all(e.source_url for e in events),
     )
     print(f"  {len(events)} event(s) passed: {sorted(kinds_in_events)}")
+
+    # ── Scenarios 7-10: best_way (multi-modal compare).
+    print("\nScenario 7 — best_way: driving 25min vs transit 45min, no events → driving wins")
+    from israel_transit_mcp.tools.best_way import best_way as bw_tool
+    bw_fn = getattr(bw_tool, "fn", bw_tool)
+
+    def _transit_route(total_s: int, transfers: int = 1) -> Route:
+        legs: list[RouteLeg] = [
+            RouteLeg(mode=TransportMode.WALKING, summary="הליכה לתחנה", distance_m=400, duration_s=300),
+        ]
+        for i in range(transfers + 1):
+            legs.append(
+                RouteLeg(
+                    mode=TransportMode.TRANSIT,
+                    summary=f"אוטובוס 4{8+i}0",
+                    distance_m=8000,
+                    duration_s=(total_s - 600) // (transfers + 1),
+                )
+            )
+        legs.append(
+            RouteLeg(mode=TransportMode.WALKING, summary="הליכה ליעד", distance_m=300, duration_s=300)
+        )
+        return Route(
+            mode=TransportMode.TRANSIT,
+            origin=Place(display_name="תל אביב"),
+            destination=Place(display_name="הרצליה"),
+            legs=legs,
+            total_duration_s=total_s,
+            total_distance_m=17500,
+            summary=f"תח״צ — {total_s // 60} דק׳",
+            source="fake_routing",
+        )
+
+    async def _best_way(driving_route: Route, transit_route: Route, events: list[DisruptionEvent]) -> dict:
+        import israel_transit_mcp.tools.best_way as bw_mod
+        routing = FakeRouting(routes_by_mode={
+            TransportMode.DRIVING: [driving_route],
+            TransportMode.TRANSIT: [transit_route],
+        })
+        rss = FakeDisruption(events=events)
+
+        class _MultiAggregator(Aggregator):
+            def __init__(self, _cfg):
+                super().__init__(
+                    _cfg,
+                    routing_provider=routing_provider_from(routing),
+                    disruption_providers=disruption_providers_from(rss),
+                )
+        original = bw_mod.Aggregator
+        bw_mod.Aggregator = _MultiAggregator
+        try:
+            return await bw_fn(
+                name="home->work",
+                at_iso=test_when.isoformat(),
+                window_hours=4,
+                modes=["driving", "transit"],
+                record_observation=False,
+            )
+        finally:
+            bw_mod.Aggregator = original
+
+    result = await _best_way(
+        driving_route=_ayalon_route(duration_s=1500),  # 25 min
+        transit_route=_transit_route(total_s=2700, transfers=1),  # 45 min
+        events=[],
+    )
+    check("ok=true", result.get("ok") is True)
+    check("winner is driving", result["winner"]["mode"] == "driving",
+          detail=f"actual={result['winner']['mode']}")
+    check("recommendation names driving", "ברכב" in result["recommendation"],
+          detail=result["recommendation"][:100])
+    check("alternatives include transit", any(a["mode"] == "transit" for a in result["alternatives"]))
+    check("baselines key carries both modes",
+          set(result["baselines"].keys()) == {"driving", "transit"})
+
+    # ── Scenario 8: Ayalon closure flips the verdict — transit beats stuck-on-road driving.
+    print("\nScenario 8 — best_way: Ayalon closure + slow drive → transit wins")
+    result = await _best_way(
+        driving_route=_ayalon_route(duration_s=2700),   # 45 min driving today
+        transit_route=_transit_route(total_s=2400, transfers=1),  # 40 min transit
+        events=[_ayalon_closure_event(test_when - timedelta(minutes=10))],
+    )
+    check("winner is transit", result["winner"]["mode"] == "transit",
+          detail=f"actual={result['winner']['mode']}")
+    check("driving alternative shows the matched disruption",
+          any(d["kind"] == "closure" for d in
+              next(a for a in result["alternatives"] if a["mode"] == "driving")["matched_disruptions"]))
+    check("recommendation explains why transit wins",
+          ("בתח״צ" in result["recommendation"]) and (("דק׳" in result["recommendation"])),
+          detail=result["recommendation"][:120])
+
+    # ── Scenario 9: one mode fails — winner is the other.
+    print("\nScenario 9 — best_way: transit source returns no routes → driving wins by default")
+    result = await _best_way(
+        driving_route=_ayalon_route(duration_s=1320),
+        transit_route=_transit_route(total_s=0),  # zero is dropped by fake
+        events=[],
+    )
+    # Override fake to return [] for transit specifically
+    import israel_transit_mcp.tools.best_way as bw_mod
+    routing = FakeRouting(routes_by_mode={
+        TransportMode.DRIVING: [_ayalon_route(duration_s=1320)],
+        TransportMode.TRANSIT: [],
+    })
+    rss = FakeDisruption(events=[])
+    class _NoTransitAgg(Aggregator):
+        def __init__(self, _cfg):
+            super().__init__(
+                _cfg,
+                routing_provider=routing_provider_from(routing),
+                disruption_providers=disruption_providers_from(rss),
+            )
+    original = bw_mod.Aggregator
+    bw_mod.Aggregator = _NoTransitAgg
+    try:
+        result = await bw_fn(
+            name="home->work",
+            at_iso=test_when.isoformat(),
+            modes=["driving", "transit"],
+            record_observation=False,
+        )
+    finally:
+        bw_mod.Aggregator = original
+    check("ok=true even when transit empty", result.get("ok") is True)
+    check("winner is driving", result["winner"]["mode"] == "driving")
+    check("no transit alternative (it returned 0 routes)",
+          not any(a["mode"] == "transit" for a in result["alternatives"]),
+          detail=str([a["mode"] for a in result["alternatives"]]))
+
+    # ── Scenario 10: per-mode baselines are isolated (drive history doesn't pollute bus).
+    print("\nScenario 10 — best_way: per-mode baselines stay isolated")
+    # Seed 6 transit observations at the same weekday/hour with eta=2400s.
+    for i in range(6):
+        store.record_eta(
+            ETAObservation(
+                saved_route_id=route_id,
+                observed_at=test_when - timedelta(days=i + 1),
+                eta_s=2400 + (i % 3 - 1) * 60,
+                weekday=2,
+                hour=8,
+            ),
+            mode="transit",
+        )
+    result = await _best_way(
+        driving_route=_ayalon_route(duration_s=1320),
+        transit_route=_transit_route(total_s=2400, transfers=1),
+        events=[],
+    )
+    drive_baseline_min = result["baselines"]["driving"]["p50_min"]
+    transit_baseline_min = result["baselines"]["transit"]["p50_min"]
+    check(
+        "driving baseline ~22 min (from earlier seed)",
+        21 <= drive_baseline_min <= 23,
+        detail=f"got {drive_baseline_min}",
+    )
+    check(
+        "transit baseline ~40 min (fresh transit seed)",
+        38 <= transit_baseline_min <= 42,
+        detail=f"got {transit_baseline_min}",
+    )
 
     print()
     if failures:

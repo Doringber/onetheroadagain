@@ -51,13 +51,9 @@ async def plan_route(
     try:
         mode_enum = TransportMode(mode.lower())
     except ValueError:
-        return {"ok": False, "error": f"unknown mode '{mode}', try 'driving'."}
-    if mode_enum is not TransportMode.DRIVING:
-        return {
-            "ok": False,
-            "error": f"mode '{mode_enum.value}' not yet wired",
-            "remedy": "driving is supported today; transit + walking land in a follow-up commit.",
-        }
+        return {"ok": False, "error": f"unknown mode '{mode}', try 'driving', 'transit', or 'walking'."}
+    if mode_enum not in {TransportMode.DRIVING, TransportMode.TRANSIT, TransportMode.WALKING}:
+        return {"ok": False, "error": f"mode '{mode_enum.value}' not supported."}
     departure: datetime | None = None
     if departure_iso:
         try:
@@ -76,10 +72,13 @@ async def plan_route(
         else None,
     )
     agg = Aggregator(cfg)
-    plan = await agg.plan_driving(origin_place, dest_place, departure_time=departure)
+    if mode_enum is TransportMode.DRIVING:
+        plan = await agg.plan_driving(origin_place, dest_place, departure_time=departure)
+    else:
+        plan = await agg.plan_in_mode(origin_place, dest_place, mode_enum, departure_time=departure)
     return {
         "ok": True,
-        "mode": "driving",
+        "mode": mode_enum.value,
         "alternatives": [_route_to_json(r) for r in plan.routes[:3]],
         "trace": _trace_to_json(plan.trace),
     }

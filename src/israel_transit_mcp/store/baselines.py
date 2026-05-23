@@ -36,10 +36,11 @@ def compute_anomaly(
     today_eta_s: int,
     threshold_minutes: int,
     min_samples: int,
+    mode: str = "driving",
 ) -> AnomalyVerdict:
     weekday = when.weekday()
     hour = when.hour
-    samples = sorted(store.bucket_observations(saved_route_id, weekday, hour))
+    samples = sorted(store.bucket_observations(saved_route_id, weekday, hour, mode))
     p50 = _percentile(samples, 0.50)
     p75 = _percentile(samples, 0.75)
     delta = today_eta_s - p50

@@ -59,11 +59,6 @@ async def morning_briefing(
             "error": f"no saved route named {name!r}",
             "remedy": "Save it first with save_route(name=..., origin=..., destination=...).",
         }
-    if saved.mode is not TransportMode.DRIVING:
-        return {
-            "ok": False,
-            "error": f"morning_briefing only supports driving routes right now; {saved.name!r} is {saved.mode.value}.",
-        }
     when: datetime
     if at_iso:
         try:
@@ -74,7 +69,9 @@ async def morning_briefing(
         when = datetime.now(timezone.utc)
 
     agg = Aggregator(cfg)
-    plan = await agg.plan_driving(saved.origin, saved.destination, departure_time=when)
+    plan = await agg.plan_in_mode(
+        saved.origin, saved.destination, saved.mode, departure_time=when
+    )
     snap = await agg.gather_disruptions(window_hours=window_hours)
 
     if not plan.routes:
@@ -97,7 +94,8 @@ async def morning_briefing(
                 eta_s=best.total_duration_s,
                 weekday=when.weekday(),
                 hour=when.hour,
-            )
+            ),
+            mode=saved.mode.value,
         )
 
     verdict = compute_anomaly(
@@ -107,6 +105,7 @@ async def morning_briefing(
         today_eta_s=best.total_duration_s,
         threshold_minutes=cfg.anomaly_threshold_minutes,
         min_samples=cfg.baseline_min_samples,
+        mode=saved.mode.value,
     )
 
     severity = _severity(verdict.is_anomalous, matching)

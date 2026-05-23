@@ -122,3 +122,20 @@ Then ask Claude things like:
 - "תכנן לי איך להגיע לעבודה עכשיו"
 - "האם המסלול לעבודה חריג היום?"
 - "מתי כדאי לי לצאת היום בערב לרכבת בתל אביב סבידור?"
+- **"איך הכי נכון להגיע הביתה היום — ברכב או בתחבורה ציבורית?"**
+
+## Tools surfaced to Claude
+
+| Tool | What it answers |
+| --- | --- |
+| `save_route` / `list_routes` / `delete_route` | Persist commutes by name in the local RAG |
+| `plan_route(mode=…)` | Driving / transit / walking — one-shot route plan with traffic |
+| `check_disruptions` | RSS + web crawler events, cross-source deduped, optional location filter |
+| `morning_briefing(name)` | Composed: route + disruptions + personal anomaly + Hebrew suggested_action for one mode |
+| **`best_way(name)`** | **Compares driving vs transit in parallel, picks the winner, explains why** |
+
+`best_way` is the headline tool: one call returns the side-by-side
+result with a ranked winner, the personal-baseline-aware delta, and a
+one-sentence Hebrew recommendation. Per-mode baselines stay isolated
+(your usual driving 22 min and your usual bus 38 min don't pollute
+each other), so the verdict is honest about which mode is unusual *today*.
