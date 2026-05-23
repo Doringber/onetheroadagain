@@ -76,10 +76,14 @@ TIER3 = _alt(
 )
 
 
+# Rule order encodes precedence: when a headline matches multiple kinds
+# (e.g. "closure caused by accident"), the impact-level kind wins over
+# the cause-level one. For routing, road-closed is more actionable than
+# accident-on-road.
 _KIND_RULES: tuple[tuple[re.Pattern[str], DisruptionKind], ...] = (
     (_alt("הפגנ", "מחא", "חוסמים", "שביתת? ?תחבורה"), DisruptionKind.PROTEST),
-    (_alt("תאונ", "פגיע", "התנגש", "הרוג", "פצוע"), DisruptionKind.ACCIDENT),
     (_alt("חסימ", "נסגר", "נחסם", "כביש סגור"), DisruptionKind.CLOSURE),
+    (_alt("תאונ", "פגיע", "התנגש", "הרוג", "פצוע"), DisruptionKind.ACCIDENT),
     (_alt("פקק", "עומס", "תנועה"), DisruptionKind.JAM),
     (_alt("שלג", "שיטפון", "גשם כבד", "סופה"), DisruptionKind.WEATHER),
     (_alt("עבודות", "שיפוצים", 'מע"צ'), DisruptionKind.ROADWORK),

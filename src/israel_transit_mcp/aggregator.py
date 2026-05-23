@@ -107,18 +107,37 @@ def _default_routing_provider(cfg: Config) -> RoutingProvider:
     return factory
 
 
-def _default_disruption_provider() -> DisruptionProvider:
-    def factory() -> AbstractAsyncContextManager:
-        from .sources.rss_news import RssNewsSource
+def _default_disruption_providers() -> dict[str, DisruptionProvider]:
+    """Production disruption providers: RSS feeds + every registered
+    web crawler. Each runs as its own TaskRunner job so one slow site
+    cannot delay the rest, and a 5xx from one crawler doesn't poison
+    the whole disruption set.
+    """
+    from .sources.rss_news import RssNewsSource
+    from .sources.crawlers import ALL_CRAWLERS
 
+    def _rss_factory() -> AbstractAsyncContextManager:
         @asynccontextmanager
         async def cm() -> AsyncIterator:
             async with RssNewsSource() as src:
                 yield src
-
         return cm()
 
-    return factory
+    providers: dict[str, DisruptionProvider] = {"rss": _rss_factory}
+
+    for crawler_cls in ALL_CRAWLERS:
+        cls = crawler_cls
+
+        def _crawler_factory(cls=cls) -> AbstractAsyncContextManager:
+            @asynccontextmanager
+            async def cm() -> AsyncIterator:
+                async with cls() as src:
+                    yield src
+            return cm()
+
+        providers[cls.name] = _crawler_factory
+
+    return providers
 
 
 class Aggregator:

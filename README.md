@@ -10,22 +10,52 @@ answers with: current driving ETA vs. your personal baseline, an anomaly flag,
 the disruption events (RSS-confirmed) that explain the anomaly, and a
 recommended departure time.
 
+## Is there an existing API that does all this?
+
+Short answer: **no.** Surveyed in May 2026: TomTom Traffic, HERE Traffic
+v7, Mapbox Traffic Data, Google Routes, Bing / Azure Maps, INRIX
+Roadway Analytics, Moovit (Mobileye), Otonomo, Waze for Cities. Every
+one of them ships *one or two* of {live ETA, labeled disruption events,
+personalized baseline} — none ships all three. The personalized layer
+("is *today* unusual for *your* Wednesday at 08:00") is what nobody
+packages because it requires per-user history. That's exactly what the
+local SQLite store here does, on top of the commercial ETA + the news
+sources nobody monetizes.
+
 ## Sources, picked deliberately
 
 | Source | What it gives | TOS-clean? |
 | --- | --- | --- |
 | **Google Routes API v1** | Driving ETA, traffic-aware, departure-time prediction | Yes (5,000 free traffic-aware calls/month) |
-| **Israeli news RSS** (Kan, Ynet, N12, Walla, gov.il) | Road closures, protests, accidents — the *cause* behind anomalies | Yes (public RSS) |
-| **IMS** (`weatheril`) | Rain/storm warnings that explain delays | Yes (public, no key) |
-| **MoT GTFS bundle** | Static bus + rail + light-rail schedules, all agencies | Yes (open data) |
-| **Hasadna Open-Bus Stride** | Live bus positions, stop ETAs | Yes (community NGO mirror of MoT SIRI) |
-| **`israel-rail-api`** | Live train arrivals + delays | Yes (well-known unofficial wrapper) |
+| **Israeli news RSS** (Ynet flash + main, N12/Mako בארץ + צבא, Walla, ToI road-closures) | Road closures, protests, accidents — the *cause* behind anomalies | Yes (public RSS) |
+| **Web crawler — mivzakim.net** | Flash-news headlines mirrored from outlets without RSS (Kan, Galei Tzahal, Telegram-first channels) | Public HTML, scraped politely (per-host lock, custom UA) |
+| **IMS** (`weatheril`, planned) | Rain/storm warnings that explain delays | Yes (public, no key) |
+| **MoT GTFS bundle** (planned) | Static bus + rail + light-rail schedules, all agencies | Yes (open data) |
+| **Hasadna Open-Bus Stride** (planned) | Live bus positions, stop ETAs | Yes (community NGO mirror of MoT SIRI) |
+| **`israel-rail-api`** (planned) | Live train arrivals + delays | Yes (well-known unofficial wrapper) |
 
 Deliberately **not** integrated:
-- **Waze** — TOS forbids automation. We rely on RSS news + Google's
+- **Waze** — TOS forbids automation. We rely on RSS + crawler + Google's
   Waze-fed traffic via the Routes API instead.
 - **Moovit** — enterprise/paid only in 2026, no realistic personal API.
 - **Pango** — no public developer program.
+- **kan.org.il HTML lobby** — JS-injected, would need Playwright; not
+  worth the dependency for v1. Better path: self-host RSSHub against
+  Telegram channels `@kann_news` and `@mivzakim` for an RSS surface.
+
+## Adding a new disruption source
+
+Two shapes, both pluggable in one place.
+
+**RSS feed** — add an entry to `DEFAULT_FEEDS` in
+`sources/rss_news.py`. Done; aggregator picks it up.
+
+**HTML scrape** — subclass `WebCrawlerSource`, define `name`, `urls`,
+and `parse_items(soup, url) -> list[ScrapedItem]`. Add the class to
+`ALL_CRAWLERS` in `sources/crawlers/__init__.py`. The aggregator's
+default providers iterate that tuple, so registration is one line. The
+base class owns HTTP, polite headers, per-host locking, the Hebrew
+classifier, recency filtering, and `DisruptionEvent` construction.
 
 ## The hybrid that makes this work
 
@@ -66,6 +96,12 @@ ISRAEL_TRANSIT_STORE_DIR=   # optional; default ~/.israel-transit-mcp
 ```bash
 uv sync --extra transit --extra weather
 israel-transit-mcp           # starts the MCP server on stdio
+
+# verify the internals (no network):
+python scripts/verify_end_to_end.py
+
+# probe the live sources from your machine (network required):
+python scripts/probe_live.py
 ```
 
 ## Connecting to Claude

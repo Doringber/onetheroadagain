@@ -337,6 +337,108 @@ async def run_scenarios() -> int:
     check("error message captured", "RuntimeError" in result["trace"]["disruptions"]["failures"].get("rss", ""))
     print(f"  trace.disruptions.failures: {result['trace']['disruptions']['failures']}")
 
+    # ── Scenario 6: web crawler parses real HTML with Hebrew traffic items.
+    print("\nScenario 6 — MivzakimCrawler parses HTML through the full classifier")
+    from bs4 import BeautifulSoup
+    from israel_transit_mcp.sources.crawlers.mivzakim import MivzakimCrawler
+
+    # A fixture shaped like a typical flash-news mirror page: <article>
+    # blocks with h2>a titles and <time datetime=...> stamps. Mixes
+    # traffic-relevant headlines with noise (sports + politics) so the
+    # classifier has to discriminate.
+    fresh = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+    stale = (datetime.now(timezone.utc) - timedelta(hours=20)).isoformat()
+    fixture_html = f"""
+    <html><body>
+      <article>
+        <h2><a href="/items/1">חסימה בנתיבי איילון צפון לאחר תאונה רבת נפגעים</a></h2>
+        <time datetime="{fresh}">לפני 20 דקות</time>
+      </article>
+      <article>
+        <h2><a href="/items/2">הפגנה גדולה ליד צומת רעננה, חוסמים את כביש 4</a></h2>
+        <time datetime="{fresh}">לפני 20 דקות</time>
+      </article>
+      <article>
+        <h2><a href="/items/3">משחק הליגה הסתיים 102:98 לטובת מכבי</a></h2>
+        <time datetime="{fresh}">לפני 20 דקות</time>
+      </article>
+      <article>
+        <h2><a href="/items/4">תאונה קטלנית בכביש 6 — הרוג אחד, שלושה פצועים</a></h2>
+        <time datetime="{stale}">לפני יום</time>
+      </article>
+      <article>
+        <h2><a href="/items/5">פגישת הממשלה אושרה ברוב גדול</a></h2>
+        <time datetime="{fresh}">לפני 20 דקות</time>
+      </article>
+    </body></html>
+    """
+
+    crawler = MivzakimCrawler()
+    parsed = crawler.parse_items(BeautifulSoup(fixture_html, "lxml"), "https://mivzakim.net/")
+    check("parser found all 5 articles", len(parsed) == 5, detail=f"got {len(parsed)}")
+    titles = [p.title for p in parsed]
+    check(
+        "first article title parsed correctly",
+        "חסימה בנתיבי איילון" in titles[0],
+        detail=titles[0][:60],
+    )
+    check(
+        "links resolved against base URL",
+        parsed[0].link.startswith("https://mivzakim.net/items/"),
+        detail=parsed[0].link,
+    )
+    check(
+        "datetime parsed from <time datetime=...>",
+        parsed[0].published_at is not None,
+        detail=str(parsed[0].published_at),
+    )
+
+    events = crawler._classify_and_filter(
+        [("https://mivzakim.net/", p) for p in parsed],
+        window_hours=6,
+        min_confidence=0.3,
+    )
+    kinds_in_events = {e.kind.value for e in events}
+    titles_in_events = {e.title for e in events}
+
+    check(
+        "stale article (20h old) was dropped",
+        all("כביש 6" not in t for t in titles_in_events),
+        detail=str(titles_in_events),
+    )
+    check(
+        "sports headline filtered out",
+        all("מכבי" not in t for t in titles_in_events),
+        detail=str(titles_in_events),
+    )
+    check(
+        "politics headline filtered out",
+        all("ממשלה" not in t for t in titles_in_events),
+        detail=str(titles_in_events),
+    )
+    check(
+        "Ayalon closure classified as 'closure'",
+        any(
+            "איילון" in e.title and e.kind.value == "closure" for e in events
+        ),
+    )
+    check(
+        "protest classified as 'protest'",
+        any(
+            "הפגנה" in e.title and e.kind.value == "protest" for e in events
+        ),
+    )
+    check(
+        "every event carries source=web:mivzakim",
+        all(e.source == "web:mivzakim" for e in events),
+        detail=str({e.source for e in events}),
+    )
+    check(
+        "every event has a source_url",
+        all(e.source_url for e in events),
+    )
+    print(f"  {len(events)} event(s) passed: {sorted(kinds_in_events)}")
+
     print()
     if failures:
         print(f"FAILED: {len(failures)} check(s):")
