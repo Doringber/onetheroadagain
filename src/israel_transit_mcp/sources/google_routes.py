@@ -96,10 +96,18 @@ class GoogleRoutesSource:
         destination: Place,
         mode: TransportMode = TransportMode.DRIVING,
         departure_time: datetime | None = None,
+        avoid_tolls: bool = False,
+        avoid_highways: bool = False,
+        avoid_ferries: bool = False,
     ) -> list[Route]:
         if mode not in self.supports_modes:
             return []
-        body, field_mask = self._build_body(origin, destination, mode, departure_time)
+        body, field_mask = self._build_body(
+            origin, destination, mode, departure_time,
+            avoid_tolls=avoid_tolls,
+            avoid_highways=avoid_highways,
+            avoid_ferries=avoid_ferries,
+        )
         client = await self._ensure_client()
         resp = await client.post(
             _ENDPOINT,
@@ -128,6 +136,9 @@ class GoogleRoutesSource:
         destination: Place,
         mode: TransportMode,
         departure_time: datetime | None,
+        avoid_tolls: bool = False,
+        avoid_highways: bool = False,
+        avoid_ferries: bool = False,
     ) -> tuple[dict[str, Any], str]:
         body: dict[str, Any] = {
             "origin": _waypoint(origin),
@@ -136,6 +147,19 @@ class GoogleRoutesSource:
             "regionCode": "IL",
             "units": "METRIC",
         }
+        # Route modifiers are only valid for DRIVE / TWO_WHEELER per Google's
+        # spec. Adding them to TRANSIT silently produces empty results.
+        if mode in (TransportMode.DRIVING, TransportMode.WALKING) and (
+            avoid_tolls or avoid_highways or avoid_ferries
+        ):
+            modifiers: dict[str, Any] = {}
+            if avoid_tolls:
+                modifiers["avoidTolls"] = True
+            if avoid_highways:
+                modifiers["avoidHighways"] = True
+            if avoid_ferries:
+                modifiers["avoidFerries"] = True
+            body["routeModifiers"] = modifiers
         if departure_time is not None:
             if departure_time.tzinfo is None:
                 departure_time = departure_time.replace(tzinfo=timezone.utc)

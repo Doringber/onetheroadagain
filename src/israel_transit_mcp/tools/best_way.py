@@ -68,6 +68,8 @@ async def best_way(
     window_hours: Annotated[int, Field(ge=1, le=24, description="Disruption lookback window.")] = 4,
     modes: Annotated[list[str] | None, Field(description="Modes to compare. Default: ['driving', 'transit'].")] = None,
     record_observation: Annotated[bool, Field(description="Record today's ETA into the baseline (per mode).")] = True,
+    avoid_tolls: Annotated[bool, Field(description="When true, exclude toll roads from driving mode (כביש 6 etc.).")] = False,
+    avoid_highways: Annotated[bool, Field(description="When true, prefer surface streets over highways.")] = False,
 ) -> dict:
     """Compare driving and transit for a saved commute and return one
     ranked recommendation.
@@ -103,7 +105,10 @@ async def best_way(
 
     agg = Aggregator(cfg)
     multi = await agg.compare_modes(
-        saved.origin, saved.destination, tuple(mode_enums), departure_time=when
+        saved.origin, saved.destination, tuple(mode_enums),
+        departure_time=when,
+        avoid_tolls=avoid_tolls,
+        avoid_highways=avoid_highways,
     )
     snap = await agg.gather_disruptions(window_hours=window_hours)
 

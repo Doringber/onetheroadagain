@@ -42,6 +42,8 @@ async def morning_briefing(
     at_iso: Annotated[str | None, Field(description="Optional ISO-8601 time to check for (default: now). Use this to ask 'what's my commute looking like at 17:30 today?'.")] = None,
     window_hours: Annotated[int, Field(ge=1, le=24, description="Disruption lookback window in hours.")] = 4,
     record_observation: Annotated[bool, Field(description="Whether to record today's ETA into eta_observations. Default true — this is how the baseline learns.")] = True,
+    avoid_tolls: Annotated[bool, Field(description="When true, exclude toll roads from driving mode.")] = False,
+    avoid_highways: Annotated[bool, Field(description="When true, prefer surface streets over highways.")] = False,
 ) -> dict:
     """Return a composed commute briefing: ETA + anomaly + disruptions + action.
 
@@ -70,7 +72,10 @@ async def morning_briefing(
 
     agg = Aggregator(cfg)
     plan = await agg.plan_in_mode(
-        saved.origin, saved.destination, saved.mode, departure_time=when
+        saved.origin, saved.destination, saved.mode,
+        departure_time=when,
+        avoid_tolls=avoid_tolls,
+        avoid_highways=avoid_highways,
     )
     snap = await agg.gather_disruptions(window_hours=window_hours)
 

@@ -78,7 +78,11 @@ class FakeRouting:
         destination: Place,
         mode: TransportMode,
         departure_time: datetime | None = None,
+        **_extra: object,
     ) -> list[Route]:
+        # Accept and ignore avoid_tolls / avoid_highways / avoid_ferries
+        # via **_extra so the fake stays compatible with future signature
+        # additions on the real source.
         if self.routes_by_mode is not None:
             return list(self.routes_by_mode.get(mode, []))
         return list(self.routes or [])

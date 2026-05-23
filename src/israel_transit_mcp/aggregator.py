@@ -190,6 +190,9 @@ class Aggregator:
         destination: Place,
         mode: TransportMode,
         departure_time: datetime | None = None,
+        avoid_tolls: bool = False,
+        avoid_highways: bool = False,
+        avoid_ferries: bool = False,
     ) -> RoutePlan:
         """Run the routing provider in any supported mode. Provider
         errors (missing API key, HTTP failure) surface as
@@ -197,7 +200,12 @@ class Aggregator:
 
         async def _call() -> list[Route]:
             async with self._routing_provider() as src:
-                return await src.plan(origin, destination, mode, departure_time)
+                return await src.plan(
+                    origin, destination, mode, departure_time,
+                    avoid_tolls=avoid_tolls,
+                    avoid_highways=avoid_highways,
+                    avoid_ferries=avoid_ferries,
+                )
 
         task_name = f"google_routes:{mode.value}"
         results = await self._runner.run({task_name: _call})
@@ -211,6 +219,9 @@ class Aggregator:
         destination: Place,
         modes: tuple[TransportMode, ...] = (TransportMode.DRIVING, TransportMode.TRANSIT),
         departure_time: datetime | None = None,
+        avoid_tolls: bool = False,
+        avoid_highways: bool = False,
+        avoid_ferries: bool = False,
     ) -> "MultiModalPlan":
         """Plan each requested mode in parallel and return them side-by-side.
 
@@ -224,7 +235,12 @@ class Aggregator:
         def _factory(m: TransportMode):
             async def _call() -> list[Route]:
                 async with self._routing_provider() as src:
-                    return await src.plan(origin, destination, m, departure_time)
+                    return await src.plan(
+                        origin, destination, m, departure_time,
+                        avoid_tolls=avoid_tolls,
+                        avoid_highways=avoid_highways,
+                        avoid_ferries=avoid_ferries,
+                    )
             return _call
 
         tasks: dict[str, Callable[[], Awaitable[list[Route]]]] = {

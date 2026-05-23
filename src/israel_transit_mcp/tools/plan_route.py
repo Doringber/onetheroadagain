@@ -32,6 +32,8 @@ async def plan_route(
     origin_lng: Annotated[float | None, Field(description="Optional origin longitude.")] = None,
     destination_lat: Annotated[float | None, Field(description="Optional destination latitude.")] = None,
     destination_lng: Annotated[float | None, Field(description="Optional destination longitude.")] = None,
+    avoid_tolls: Annotated[bool, Field(description="When true, exclude toll roads (כביש 6 etc.). Driving only.")] = False,
+    avoid_highways: Annotated[bool, Field(description="When true, prefer surface streets over highways. Driving only.")] = False,
 ) -> dict:
     """Plan a route between two places using live Israeli traffic data.
 
@@ -72,10 +74,12 @@ async def plan_route(
         else None,
     )
     agg = Aggregator(cfg)
-    if mode_enum is TransportMode.DRIVING:
-        plan = await agg.plan_driving(origin_place, dest_place, departure_time=departure)
-    else:
-        plan = await agg.plan_in_mode(origin_place, dest_place, mode_enum, departure_time=departure)
+    plan = await agg.plan_in_mode(
+        origin_place, dest_place, mode_enum,
+        departure_time=departure,
+        avoid_tolls=avoid_tolls,
+        avoid_highways=avoid_highways,
+    )
     return {
         "ok": True,
         "mode": mode_enum.value,
