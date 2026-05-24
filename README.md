@@ -122,9 +122,13 @@ python scripts/verify_end_to_end.py
 python scripts/probe_live.py
 ```
 
-## Connecting to Claude
+## Connecting to Claude / Cursor
 
-Add to `~/.config/claude-code/mcp.json` (or your client's equivalent):
+Three clients, same server. Pick one.
+
+### Claude Code
+
+`~/.config/claude-code/mcp.json`:
 
 ```json
 {
@@ -135,6 +139,57 @@ Add to `~/.config/claude-code/mcp.json` (or your client's equivalent):
   }
 }
 ```
+
+### Claude Desktop
+
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "israel-transit": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/onetheroadagain",
+        "israel-transit-mcp"
+      ],
+      "env": {
+        "GOOGLE_MAPS_API_KEY": "<your-key>"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop fully (Cmd+Q, reopen). GUI apps don't inherit
+shell PATH, so use the absolute `uv` path (`which uv`).
+
+### Cursor
+
+`~/.cursor/mcp.json` (global) or `<project>/.cursor/mcp.json` (per-project):
+
+```json
+{
+  "mcpServers": {
+    "israel-transit": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/onetheroadagain",
+        "israel-transit-mcp"
+      ],
+      "env": {
+        "GOOGLE_MAPS_API_KEY": "<your-key>"
+      }
+    }
+  }
+}
+```
+
+Then Cursor → Settings → MCP → enable `israel-transit`.
 
 Then ask Claude things like:
 - "תכנן לי איך להגיע לעבודה עכשיו"
