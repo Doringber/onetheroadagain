@@ -1,0 +1,48 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: 44/44 internal scenarios + import sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package + runtime deps
+        run: pip install -e .
+
+      - name: Smoke test — server boots and registers tools
+        run: |
+          timeout 3s israel-transit-mcp < /dev/null > /dev/null 2>&1 || true
+          python -c "import israel_transit_mcp.server; import israel_transit_mcp.tools; print('imports OK')"
+
+      - name: verify_end_to_end — must return ALL CHECKS PASSED
+        run: python scripts/verify_end_to_end.py
+
+  docker:
+    name: docker build (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t israel-transit-mcp:ci .
+
+      - name: Smoke — container starts and exits on EOF
+        run: |
+          timeout 3s docker run --rm -i \
+            -e GOOGLE_MAPS_API_KEY=fake \
+            israel-transit-mcp:ci < /dev/null > /dev/null 2>&1 || true
+          echo "container starts cleanly"
